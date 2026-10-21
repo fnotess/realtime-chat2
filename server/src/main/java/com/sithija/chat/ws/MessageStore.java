@@ -1,6 +1,7 @@
 package com.sithija.chat.ws;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -17,7 +18,18 @@ public interface MessageStore {
      *
      * @throws UnknownRecipientException if no account has that username
      */
-    StoredMessage save(String sender, String recipient, UUID clientMsgId, String text);
+    default StoredMessage save(String sender, String recipient, UUID clientMsgId, String text) {
+        throw new UnsupportedOperationException();
+    }
+
+    default StoredMessage saveToGroup(String sender, String recipient, UUID clientMsgId, String text) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** Usernames of the group's members. */
+    default List<String> members(long conversationId) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Raises the user's delivered (and, if read, read) watermark in the conversation to seq; never
