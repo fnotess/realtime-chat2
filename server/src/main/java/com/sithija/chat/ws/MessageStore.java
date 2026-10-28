@@ -1,6 +1,7 @@
 package com.sithija.chat.ws;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -19,11 +20,18 @@ public interface MessageStore {
      */
     StoredMessage save(String sender, String recipient, UUID clientMsgId, String text);
 
+
     /**
      * Raises the user's delivered (and, if read, read) watermark in the conversation to seq; never
      * lowers it. Empty if the user isn't a member or seq is outside 1..the conversation's last seq.
      */
     Optional<Receipt> recordReceipt(String user, long conversationId, long seq, boolean read);
+
+    default StoredMessage saveGroup(String sender, long groupId, UUID clientMsgId, String text){
+        throw new UnsupportedOperationException(
+                "Group messaging not supported"
+        );
+    };
 
     /** The user's watermarks after the update, and the other member, who should be told. */
     record Receipt(long conversationId, String user, String otherUser, long deliveredSeq, long readSeq) { }
@@ -36,4 +44,8 @@ public interface MessageStore {
             super("Unknown recipient: " + username);
         }
     }
+
+    default List<String> groupMembers(long groupId){
+        return List.of();
+    };
 }

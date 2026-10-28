@@ -44,6 +44,9 @@ public class MessageRouter {
     record Message(String type, long id, long conversationId, long seq, String from, String to,
                    String text, String clientMsgId, long ts) { }
 
+    record GroupMessage(String type, long id, long conversationId, long seq, String from,
+                   String text, String clientMsgId, long ts) { }
+
     record Ready(String type, String user) { }
 
     record ReceiptPush(String type, long conversationId, String user, long deliveredSeq, long readSeq) { }
@@ -69,6 +72,7 @@ public class MessageRouter {
             case "send" -> onSend(sender, senderId, msg, clientMsgId);
             case "delivered" -> onReceipt(sender, senderId, msg, false);
             case "read" -> onReceipt(sender, senderId, msg, true);
+            case "group_send" -> onGroupSend(sender, senderId, msg, clientMsgId);
             default -> reply(sender, error("unknown_type", "Unknown type: " + type, clientMsgId));
         }
     }
@@ -133,6 +137,67 @@ public class MessageRouter {
             if (conn != sender) {
                 conn.enqueueText(message);
             }
+        }
+    }
+
+    private void onGroupSend(WsConnection sender, String senderId, JsonNode msg, String clientMsgId) {
+        Long groupId = positiveLong(msg, "groupId");
+        String text = string(msg, "text");
+        //String problem = validateSend(senderId, groupId, clientMsgId, text);
+
+//        if (problem != null) {
+//            reply(sender, error(problem, describe(problem), clientMsgId));
+//            return;
+//        }
+        if (groupId==null ||text==null ||clientMsgId==null){
+            reply(sender, error("missing field", "Message not stored; retry with the same clientMsgId", clientMsgId));
+        }
+
+        // Runs on this connection's reader thread, so a tab's messages are stored one at a time,
+        // in the order it sent them. Blocking on the database is fine on a virtual thread.
+        MessageStore.StoredMessage stored;
+        try {
+            stored = store.saveGroup(senderId,groupId , UUID.fromString(clientMsgId), text);
+
+        } catch (MessageStore.UnknownRecipientException e) {
+            reply(sender, error("invalid_group", "No user named '" + groupId + "'", clientMsgId));
+            return;
+        } catch (RuntimeException e) {
+            // Nothing was stored, so no ack. The client can retry with the same clientMsgId;
+            // the unique constraint makes that retry safe even if the first attempt actually
+            // committed and only the reply was lost.
+            log.warn("Failed to store message from {}", senderId, e);
+            reply(sender, error("server_error", "Message not stored; retry with the same clientMsgId", clientMsgId));
+            return;
+        }
+
+        // Committed, so it's now safe to tell anyone. Fanning out before the commit could deliver
+        // a message that then rolls back, and the recipient would see a message that doesn't exist.
+        long ts = stored.createdAt().toEpochMilli();
+
+        reply(sender, new Ack("ack", clientMsgId, stored.id(), stored.conversationId(), stored.seq(), ts));
+
+        // A duplicate was already fanned out the first time. Tabs that missed it catch up from
+        // history, and clients dedupe by id either way.
+        if (stored.duplicate()) {
+            return;
+        }
+        // Encoded once and shared by every recipient connection: fan-out to N tabs is N
+        // queue offers, not N serializations.
+        byte[] message = encode(new GroupMessage("group_message", stored.id(), stored.conversationId(), stored.seq(),
+                senderId, text, clientMsgId, ts));
+
+        ///loop over all group mememebrs
+        for(String to: store.groupMembers(groupId)) {
+            for (WsConnection conn : registry.connectionsOf(to)) {
+
+                // The sender's other tabs get the message too, so their view of the conversation stays
+                // complete. Not the originating tab: it has the text already and gets an ack instead.
+                if (conn != sender) {
+                    conn.enqueueText(message);
+                }
+            }
+
         }
     }
 

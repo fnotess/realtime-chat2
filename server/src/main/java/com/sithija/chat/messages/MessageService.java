@@ -6,6 +6,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -50,6 +51,50 @@ public class MessageService implements MessageStore {
                     .map(row -> toStored(row, sender, recipient, true))
                     .orElseThrow(() -> e);
         }
+    }
+
+    @Override
+    public StoredMessage saveGroup(String sender, long groupId, UUID clientMsgId, String text) {
+        //find the sender
+        long senderId = repo.findUserId(sender).orElseThrow(() -> new IllegalStateException("Unknown sender " + sender));
+        //no need bob
+        //long recipientId = repo.findUserId(groupId).orElseThrow(() -> new UnknownRecipientException(groupId));
+
+        try {
+            return tx.execute(status -> {
+
+                //sender must brlong to the grp do that chekc here
+
+                // A retry after a reconnect: hand back the original instead of storing it twice.
+                var existing = repo.findByClientMsgId(senderId, clientMsgId);
+
+                if (existing.isPresent()) {
+
+                    //dont accept a uuid previousl used for diff conversation
+
+                    return toStored(existing.get(), sender, "", true);
+                }
+
+//                long conversationId = repo.findOrCreateConversation(senderId, groupId);
+
+                long seq = repo.nextSeq(groupId);
+
+                MessageRow row = repo.insertMessage(groupId, seq, senderId, clientMsgId, text);
+
+                //no inidivdual re ipeient
+                return toStored(row, sender, "", false);
+            });
+        } catch (DuplicateKeyException e) {
+
+            return repo.findByClientMsgId(senderId, clientMsgId)
+                    .map(row -> toStored(row, sender, "", true))
+                    .orElseThrow(() -> e);
+        }
+    }
+
+    @Override
+    public List<String> groupMembers(long groupId) {
+        return repo.groupMembers(groupId);
     }
 
     @Override

@@ -239,4 +239,24 @@ public class MessageRepository {
     private static Instant toInstant(OffsetDateTime t) {
         return t == null ? null : t.toInstant();
     }
+
+
+    //add group spepcigic methods
+
+
+    //this is for fanout need all groupmmeberts and usernames to send them out msgs
+    List<String> groupMembers(long groupId){
+        return jdbc.sql(""" 
+                 SELECT u.username
+                 from conversation_members cm join users u on u.id =cm.user_id
+                 where cm.conversation_id =:groupId
+                """)
+                .param("groupId", groupId)
+                .query(String.class)
+                .list();
+    }
+
+    //check the sender belongs to a group
+
+
 }
