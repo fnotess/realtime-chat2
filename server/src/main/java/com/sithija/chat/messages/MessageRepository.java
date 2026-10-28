@@ -114,7 +114,17 @@ public class MessageRepository {
                 .param("id", conversationId)
                 .param("username", username)
                 .query(String.class)
-                .optional();
+                .optional()
+                .or(()-> jdbc.sql(""" 
+                                select '#' || c.name from conversations c
+                                join conversation_members cm on cm.conversation_id = c.id
+                                join users u on u.id= cm.user_id
+                                where c.id = :id and u.username = :username 
+                                """)
+                        .param("id",conversationId)
+                        .param("username",username)
+                        .query(String.class)
+                        .optional());
     }
 
     /** Newest conversation first, each with its last message. */
@@ -238,5 +248,41 @@ public class MessageRepository {
 
     private static Instant toInstant(OffsetDateTime t) {
         return t == null ? null : t.toInstant();
+    }
+
+
+    long findOrCreateGroup(String name){
+        jdbc.sql("""
+                INSERT INTO conversations (name) VALUES (:name)
+                ON CONFLICT (name) DO NOTHING
+                """)
+                .param("name", name)
+                .update();
+        return jdbc.sql("SELECT id FROM conversations WHERE name = :name")
+                .param("name", name)
+                .query(Long.class)
+                .single();
+    }
+
+    void addMember(long conversationId, long userId){
+        jdbc.sql("""
+                INSERT INTO conversation_members (conversation_id,user_id) VALUES (:c,:u)
+                ON CONFLICT DO NOTHING
+                """)
+                .param("c", conversationId)
+                .param("u",userId)
+                .update();
+    }
+
+    public List<String> members(long cId){
+        return jdbc.sql( """
+                 select u.username 
+                 from conversation_members cm join users u on 
+                 u.id = cm.user_id
+                 where cm.conversation_id = :c
+                """)
+                .param("c", cId)
+                .query(String.class)
+                .list();
     }
 }

@@ -8,6 +8,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -96,8 +97,20 @@ public class MessageRouter {
         // Runs on this connection's reader thread, so a tab's messages are stored one at a time,
         // in the order it sent them. Blocking on the database is fine on a virtual thread.
         MessageStore.StoredMessage stored;
+
+        // if to starts with # means sending to group
+
+        boolean group = to.startsWith("#");
+        log.info("is it group " + group);
+
         try {
-            stored = store.save(senderId, to, UUID.fromString(clientMsgId), text);
+            if(group){
+                //save to group
+                stored = store.saveToGroup(senderId, to, UUID.fromString(clientMsgId), text);
+                log.info("saved to group");
+            }else {
+                stored = store.save(senderId, to, UUID.fromString(clientMsgId), text);
+            }
         } catch (MessageStore.UnknownRecipientException e) {
             reply(sender, error("unknown_recipient", "No user named '" + to + "'", clientMsgId));
             return;
@@ -124,14 +137,30 @@ public class MessageRouter {
         // queue offers, not N serializations.
         byte[] message = encode(new Message("message", stored.id(), stored.conversationId(), stored.seq(),
                 senderId, to, text, clientMsgId, ts));
-        for (WsConnection conn : registry.connectionsOf(to)) {
-            conn.enqueueText(message);
-        }
+
+        // 2 fanout looops where sender and receiveer all tabs get evryrhting
+
+        //get the list of recipeients in the group
+        //get memebers
+
+        //loop here
+
+        List<String> recipients = group? store.members(stored.conversationId()):List.of(senderId,to);
+        log.info("get all recpients");
+
+
+//        for (WsConnection conn : registry.connectionsOf(to)) {
+//            conn.enqueueText(message);
+//        }
         // The sender's other tabs get the message too, so their view of the conversation stays
         // complete. Not the originating tab: it has the text already and gets an ack instead.
-        for (WsConnection conn : registry.connectionsOf(senderId)) {
-            if (conn != sender) {
-                conn.enqueueText(message);
+        log.info("new fanout with multi people");
+        for(String user: recipients) {
+            for (WsConnection conn : registry.connectionsOf(user)) {
+                // done send the same message to sender again
+                if (conn != sender) {
+                    conn.enqueueText(message);
+                }
             }
         }
     }
@@ -186,7 +215,14 @@ public class MessageRouter {
         if (to == null || clientMsgId == null || text == null) {
             return "missing_field";
         }
-        if (!Usernames.isValid(to)) {
+
+        String name =to;
+        if(to.startsWith("#")){
+            log.info("team creation detetcted");
+            name = to.substring(1);
+        }
+
+        if (!Usernames.isValid(name)) {
             return "invalid_recipient";
         }
         if (to.equals(senderId)) {

@@ -6,6 +6,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -23,6 +24,44 @@ public class MessageService implements MessageStore {
     public MessageService(MessageRepository repo, TransactionTemplate tx) {
         this.repo = repo;
         this.tx = tx;
+    }
+
+    @Override
+    public StoredMessage saveToGroup(String sender, String group, UUID clientMsgId, String text){
+        long senderId = repo.findUserId(sender).orElseThrow(() -> new IllegalStateException("Unknown sender " + sender));
+        //long recipientId = repo.findUserId(recipient).orElseThrow(() -> new UnknownRecipientException(recipient));
+
+        /// so if a sender sens #team we take it as a grp cretaiioj  request and popuate accordingly
+        //get the group name
+        String to = '#'+group;
+
+        return tx.execute(status -> {
+            // A retry after a reconnect: hand back the original instead of storing it twice.
+            var existing = repo.findByClientMsgId(senderId, clientMsgId);
+            if (existing.isPresent()) {
+                return toStored(existing.get(), sender, to, true);
+            }
+
+            // create group
+            long conversationId = repo.findOrCreateGroup(to);
+            System.out.println("convo id created " + conversationId);
+
+            //add memeber
+            repo.addMember(conversationId,senderId);
+            long seq = repo.nextSeq(conversationId);
+            System.out.println("member added and seq taken " + seq);
+
+            // insert msg remains same
+            MessageRow row = repo.insertMessage(conversationId, seq, senderId, clientMsgId, text);
+            System.out.println(" message row inserted " + row.id());
+            return toStored(row, sender, to, false);
+        });
+
+    }
+
+    @Override
+    public List<String> members(long conversationId) {
+        return repo.members(conversationId);
     }
 
     @Override
