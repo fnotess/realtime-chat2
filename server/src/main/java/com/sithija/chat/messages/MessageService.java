@@ -20,9 +20,12 @@ public class MessageService implements MessageStore {
     private final MessageRepository repo;
     private final TransactionTemplate tx;
 
-    public MessageService(MessageRepository repo, TransactionTemplate tx) {
+    private final OutboxRepository outboxRepository;
+
+    public MessageService(MessageRepository repo, TransactionTemplate tx, OutboxRepository outboxRepository) {
         this.repo = repo;
         this.tx = tx;
+        this.outboxRepository = outboxRepository;
     }
 
     @Override
@@ -39,6 +42,11 @@ public class MessageService implements MessageStore {
                 long conversationId = repo.findOrCreateConversation(senderId, recipientId);
                 long seq = repo.nextSeq(conversationId);
                 MessageRow row = repo.insertMessage(conversationId, seq, senderId, clientMsgId, text);
+
+                // new
+                //enqueu // inser tto outbox table
+                outboxRepository.enqueue(row);
+
                 return toStored(row, sender, recipient, false);
             });
         } catch (DuplicateKeyException e) {
